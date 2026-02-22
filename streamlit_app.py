@@ -638,10 +638,17 @@ button[kind="header"] { visibility: visible !important; }
     margin-top: 4px;
 }
 .rm-hero-breakdown {
-    display: grid; grid-template-columns: repeat(4, 1fr);
-    gap: 12px; margin-top: 1.5rem; padding-top: 1.5rem;
-    border-top: 1px solid var(--border-light);
+    display: grid; grid-template-columns: 1fr;
+    gap: 0; margin-top: 0.5rem; padding-top: 0;
+    border-top: none;
     position: relative; z-index: 1;
+}
+.rm-hero-breakdown .rm-bd-item {
+    min-height: 40px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 6px;
 }
 .rm-bd-item { text-align: center; }
 .rm-bd-val {
@@ -702,7 +709,7 @@ button[kind="header"] { visibility: visible !important; }
     display: flex;
     flex-direction: column;
     gap: 0.6rem;
-    min-height: 200px;
+    min-height: 150px;
 }
 .rm-card:hover {
     transform: translateY(-3px);
@@ -2023,27 +2030,19 @@ if st.session_state.get("analyzed") and "report" in st.session_state:
                     return ("Design", "🎨", "#F59E0B")
                 return ("General", "💼", "#6B7280")
 
-            def _bd_color(val):
-                if val >= 0.7: return "#10B981"
-                if val >= 0.5: return "#6366F1"
-                if val >= 0.3: return "#F59E0B"
-                return "#EF4444"
-
             # ═══════════════════════════════════════════════
             # Hero — #1 Best Match
             # ═══════════════════════════════════════════════
             top = top_roles[0]
             t_score = top["score"] * 100
-            t_bd = top.get("breakdown", {})
-            t_sem = t_bd.get("semantic", 0)
-            t_sk  = t_bd.get("skills", 0)
-            t_exp = t_bd.get("experience", 0)
-            t_kw  = t_bd.get("keywords", 0)
             is_target_top = target_role.lower() == top["role_name"].lower()
             s_label, s_color, s_bg = _match_strength(t_score)
             c_name, c_icon, c_color = _role_cat(top["role_name"])
 
             target_tag = '<div class="rm-hero-target">🎯 Your Target Role</div>' if is_target_top else ''
+
+            # Breakdown metrics (compact, derived from overall match)
+            bd_overall = int(t_score)
 
             hero_html = f'''<div class="rm-hero">
 <div class="rm-hero-badge">⭐ Best Match</div>
@@ -2058,16 +2057,19 @@ if st.session_state.get("analyzed") and "report" in st.session_state:
 <div class="rm-hero-pct-label">Match Score</div>
 </div>
 </div>
-<div class="rm-hero-breakdown">
-<div class="rm-bd-item"><div class="rm-bd-val" style="color:{_bd_color(t_sem)};">{t_sem*100:.0f}%</div><div class="rm-bd-label">Semantic</div><div class="rm-bd-bar"><div class="rm-bd-fill" style="width:{t_sem*100:.0f}%;background:{_bd_color(t_sem)};"></div></div></div>
-<div class="rm-bd-item"><div class="rm-bd-val" style="color:{_bd_color(t_sk)};">{t_sk*100:.0f}%</div><div class="rm-bd-label">Skills</div><div class="rm-bd-bar"><div class="rm-bd-fill" style="width:{t_sk*100:.0f}%;background:{_bd_color(t_sk)};"></div></div></div>
-<div class="rm-bd-item"><div class="rm-bd-val" style="color:{_bd_color(t_exp)};">{t_exp*100:.0f}%</div><div class="rm-bd-label">Experience</div><div class="rm-bd-bar"><div class="rm-bd-fill" style="width:{t_exp*100:.0f}%;background:{_bd_color(t_exp)};"></div></div></div>
-<div class="rm-bd-item"><div class="rm-bd-val" style="color:{_bd_color(t_kw)};">{t_kw*100:.0f}%</div><div class="rm-bd-label">Keywords</div><div class="rm-bd-bar"><div class="rm-bd-fill" style="width:{t_kw*100:.0f}%;background:{_bd_color(t_kw)};"></div></div></div>
-</div>
 <div class="rm-hero-footer">
 <div class="rm-strength-badge" style="background:{s_bg};color:{s_color};">● {s_label} Match</div>
 <div class="rm-rank-label">#1 of {len(top_roles)} matched roles</div>
 </div>
+
+<div class="rm-hero-breakdown">
+    <div class="rm-card-score-row" style="border-top:none; padding-top:0;">
+        <div class="rm-card-bar-wrap">
+            <div class="rm-card-bar-track"><div class="rm-card-bar-fill" style="width:{bd_overall}%;background:linear-gradient(90deg,{s_color},{s_color}88);"></div></div>
+        </div>
+    </div>
+</div>
+
 </div>'''
             st.markdown(hero_html, unsafe_allow_html=True)
 
@@ -2082,11 +2084,6 @@ if st.session_state.get("analyzed") and "report" in st.session_state:
                 for idx, role in enumerate(remaining):
                     rank = idx + 2
                     sc = role["score"] * 100
-                    bd = role.get("breakdown", {})
-                    r_sem = bd.get("semantic", 0)
-                    r_sk  = bd.get("skills", 0)
-                    r_exp = bd.get("experience", 0)
-                    r_kw  = bd.get("keywords", 0)
                     sl, scol, sbg = _match_strength(sc)
                     cn, ci, cc = _role_cat(role["role_name"])
                     is_target = target_role.lower() == role["role_name"].lower()
@@ -2094,7 +2091,7 @@ if st.session_state.get("analyzed") and "report" in st.session_state:
                     rank_icon = "🥈" if rank == 2 else "🥉" if rank == 3 else f"#{rank}"
                     tgt_html = '<div class="rm-card-target-tag">🎯 Target</div>' if is_target else ''
 
-                    cards_html += f'''<div class="rm-card">
+                    cards_html += f'''<div class="rm-card"> 
 <div class="rm-card-top">
 <span class="rm-card-rank">{rank_icon}</span>
 <span class="rm-card-cat" style="background:{cc}12;color:{cc};">{ci} {html.escape(cn)}</span>
@@ -2107,12 +2104,6 @@ if st.session_state.get("analyzed") and "report" in st.session_state:
 <div class="rm-card-bar-track"><div class="rm-card-bar-fill" style="width:{sc:.0f}%;background:linear-gradient(90deg,{scol},{scol}88);"></div></div>
 <div class="rm-card-strength" style="color:{scol};">{sl}</div>
 </div>
-</div>
-<div class="rm-card-bd">
-<div class="rm-card-bd-item"><div class="rm-card-bd-val" style="color:{_bd_color(r_sem)};">{r_sem*100:.0f}%</div><div class="rm-card-bd-label">Sem</div><div class="rm-card-bd-bar"><div class="rm-card-bd-fill" style="width:{r_sem*100:.0f}%;background:{_bd_color(r_sem)};"></div></div></div>
-<div class="rm-card-bd-item"><div class="rm-card-bd-val" style="color:{_bd_color(r_sk)};">{r_sk*100:.0f}%</div><div class="rm-card-bd-label">Skill</div><div class="rm-card-bd-bar"><div class="rm-card-bd-fill" style="width:{r_sk*100:.0f}%;background:{_bd_color(r_sk)};"></div></div></div>
-<div class="rm-card-bd-item"><div class="rm-card-bd-val" style="color:{_bd_color(r_exp)};">{r_exp*100:.0f}%</div><div class="rm-card-bd-label">Exp</div><div class="rm-card-bd-bar"><div class="rm-card-bd-fill" style="width:{r_exp*100:.0f}%;background:{_bd_color(r_exp)};"></div></div></div>
-<div class="rm-card-bd-item"><div class="rm-card-bd-val" style="color:{_bd_color(r_kw)};">{r_kw*100:.0f}%</div><div class="rm-card-bd-label">Kwd</div><div class="rm-card-bd-bar"><div class="rm-card-bd-fill" style="width:{r_kw*100:.0f}%;background:{_bd_color(r_kw)};"></div></div></div>
 </div>
 </div>'''
 
