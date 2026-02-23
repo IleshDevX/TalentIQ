@@ -1304,12 +1304,38 @@ p, li, span { font-family: 'Inter', sans-serif !important; }
 # ═══════════════════════════════════════════════════════════════════════════
 
 @st.cache_data(ttl=300)
+def _fetch_roles_cached():
+    """Fetch roles from API. Only called when API is confirmed reachable."""
+    resp = requests.get(f"{API_BASE}/roles", timeout=10)
+    resp.raise_for_status()
+    roles = resp.json().get("roles", [])
+    if not roles:
+        raise ValueError("Empty roles list")
+    return roles
+
+
 def fetch_roles():
+    """
+    Fetch roles with retry logic.
+    Never caches empty/failed results — retries until API is ready.
+    """
     try:
-        resp = requests.get(f"{API_BASE}/roles", timeout=10)
-        resp.raise_for_status()
-        return resp.json().get("roles", [])
+        return _fetch_roles_cached()
     except Exception:
+        # API not ready or failed — don't cache, try direct call
+        for attempt in range(3):
+            try:
+                time.sleep(1)
+                resp = requests.get(f"{API_BASE}/roles", timeout=10)
+                resp.raise_for_status()
+                roles = resp.json().get("roles", [])
+                if roles:
+                    # Clear the bad cache and re-cache with good data
+                    _fetch_roles_cached.clear()
+                    return _fetch_roles_cached()
+                return roles
+            except Exception:
+                continue
         return []
 
 
@@ -1538,9 +1564,15 @@ def chips_html(skills, cls="chip-default"):
 def breakdown_html(breakdown: dict) -> str:
     _icons = {"skill": "🎯", "experience": "💼", "semantic": "🔗", "education": "🎓", "format": "📝"}
     _bg = {"skill": "#EEF2FF", "experience": "#FEF3C7", "semantic": "#F0FDFA", "education": "#FDF2F8", "format": "#F5F3FF"}
+    # Explicit labels to avoid confusion with other metrics (e.g. "Skill Match" from SkillGapEngine)
+    _labels = {
+        "skill_score": "Skill Relevance (ATS)",
+        "experience_score": "Experience Fit (ATS)",
+        "semantic_score": "Semantic Match (ATS)",
+    }
     html = '<div class="bd-grid">'
     for k, v in breakdown.items():
-        label = k.replace("_", " ").title()
+        label = _labels.get(k, k.replace("_", " ").title())
         val = v if isinstance(v, (int, float)) else 0
         key_lower = k.lower().split("_")[0]
         icon = _icons.get(key_lower, "📊")
@@ -1624,7 +1656,11 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
     roles_data = fetch_roles()
-    role_names = ["Auto-detect (Best Match)"] + [r["role_name"] for r in roles_data]
+    if roles_data:
+        role_names = ["Auto-detect (Best Match)"] + [r["role_name"] for r in roles_data]
+    else:
+        role_names = ["Auto-detect (Best Match)"]
+        st.warning("⚠️ Could not load roles from API. Make sure the backend is running.")
     selected_role = st.selectbox("Select target role", role_names, index=0, label_visibility="collapsed")
     if selected_role == "Auto-detect (Best Match)":
         selected_role = "Auto-detect (best match)"
@@ -1811,12 +1847,12 @@ if st.session_state.get("analyzed") and "report" in st.session_state:
         #  SCORE RING STRIP — 3x2 KPI grid at top of Overview
         # ══════════════════════════════════════════════════════════════
         rings = [
-            (ats_score_val, "ATS Score",    _label(ats_score_val),    _clr(ats_score_val),    "rc-indigo"),
-            (coverage_pct,  "Skill Match",  f"{len(skill_gap.get('matched_skills',[]))} found",  _clr(coverage_pct),  "rc-teal"),
-            (jd_match_pct,  "JD Alignment", _label(jd_match_pct),     _clr(jd_match_pct),     "rc-blue"),
-            (ats_sim_score, "ATS Sim",      _label(ats_sim_score),    _clr(ats_sim_score),    "rc-purple"),
-            (soft_score,    "Soft Skills",  _label(soft_score),       _clr(soft_score),       "rc-green"),
-            (industry_score,"Industry",     _label(industry_score),   _clr(industry_score),   "rc-amber"),
+            (ats_score_val, "ATS Score",       _label(ats_score_val),    _clr(ats_score_val),    "rc-indigo"),
+            (coverage_pct,  "Skill Coverage",  f"{len(skill_gap.get('matched_skills',[]))} found",  _clr(coverage_pct),  "rc-teal"),
+            (jd_match_pct,  "JD Match",        _label(jd_match_pct),     _clr(jd_match_pct),     "rc-blue"),
+            (ats_sim_score, "ATS Simulation",  _label(ats_sim_score),    _clr(ats_sim_score),    "rc-purple"),
+            (soft_score,    "Soft Skills",     _label(soft_score),       _clr(soft_score),       "rc-green"),
+            (industry_score,"Industry Fit",    _label(industry_score),   _clr(industry_score),   "rc-amber"),
         ]
         ring_cards = "".join(render_ring_card(p, l, s, c, a) for p, l, s, c, a in rings)
         st.markdown(f'<div class="ring-row anim-up">{ring_cards}</div>', unsafe_allow_html=True)
@@ -1834,7 +1870,7 @@ if st.session_state.get("analyzed") and "report" in st.session_state:
                     <div class="gp-title">Multi-Dimension Assessment</div>
                 </div>
             </div>''', unsafe_allow_html=True)
-            radar_cats = ["ATS Score", "Skill Match", "JD Align", "ATS Sim", "Soft Skills", "Industry"]
+            radar_cats = ["ATS Score", "Skill Coverage", "JD Match", "ATS Simulation", "Soft Skills", "Industry Fit"]
             radar_vals = [ats_score_val, coverage_pct, jd_match_pct, ats_sim_score, soft_score, industry_score]
             st.plotly_chart(
                 make_radar(radar_cats, radar_vals, title="Performance Metrics"), 
@@ -2122,20 +2158,20 @@ if st.session_state.get("analyzed") and "report" in st.session_state:
     # ─────────────────────────────────────────────────────────
     with tabs[2]:
         if jd_comp or ats_sim:
-            # Extract all data
-            overall = jd_comp.get("overall_match_percent", 0) if jd_comp else 0
+            # Extract all data — use the SAME scores as the Overview tab
+            overall = jd_match_pct  # from overview: jd_comp.get("overall_match_percent", 0)
             matched_kw = jd_comp.get("matched_keywords", []) if jd_comp else []
             missing_kw = jd_comp.get("missing_keywords", []) if jd_comp else []
             section_scores = jd_comp.get("section_scores", {}) if jd_comp else {}
             
-            ats_compat = ats_sim.get("ats_compatibility_score", 0) if ats_sim else 0
+            ats_compat = ats_sim_score  # from overview: ats_sim.get("ats_compatibility_score", 0)
             kw_report = ats_sim.get("keyword_report", {}) if ats_sim else {}
             sections_complete = ats_sim.get("section_completeness", {}) if ats_sim else {}
             readability = ats_sim.get("readability", {}) if ats_sim else {}
             risks = ats_sim.get("formatting_risks", []) if ats_sim else []
             alerts = ats_sim.get("alerts", []) if ats_sim else []
             
-            # Calculate combined score
+            # Calculate combined score using same values as overview
             combined_score = (overall + ats_compat) / 2 if (overall and ats_compat) else (overall or ats_compat)
             
             # Determine grade
@@ -2228,7 +2264,7 @@ if st.session_state.get("analyzed") and "report" in st.session_state:
                     </div>
                     
                     <div class="metric-card card-ats">
-                        <div class="metric-label">ATS Score</div>
+                        <div class="metric-label">ATS Simulation</div>
                         <div class="ring-container">
                             <svg width="100" height="100" viewBox="0 0 100 100">
                                 <circle cx="50" cy="50" r="40" fill="none" stroke="#E5E7EB" stroke-width="8"/>
@@ -2239,7 +2275,7 @@ if st.session_state.get("analyzed") and "report" in st.session_state:
                                 <text x="50" y="55" text-anchor="middle" font-size="20" font-weight="800" fill="#1F2937">{ats_compat:.0f}%</text>
                             </svg>
                         </div>
-                        <div class="metric-sub">ATS Compatibility</div>
+                        <div class="metric-sub">ATS Compatibility Score</div>
                     </div>
                 </div>
             </body>
@@ -2423,6 +2459,15 @@ if st.session_state.get("analyzed") and "report" in st.session_state:
                     "certifications": "📜",
                     "projects": "🚀"
                 }
+                # Labels clarified to distinguish from ATS breakdown & overview metrics
+                section_display_labels = {
+                    "skills": "JD Skills Relevance",
+                    "experience": "JD Experience Relevance",
+                    "education": "JD Education Relevance",
+                    "tools": "JD Tools Relevance",
+                    "certifications": "JD Certifications Relevance",
+                    "projects": "JD Projects Relevance",
+                }
                 section_order = ["skills", "experience", "education"]
                 
                 section_bars_html = ''
@@ -2444,7 +2489,7 @@ if st.session_state.get("analyzed") and "report" in st.session_state:
                             bar_color = "#EF4444"
                         
                         icon = section_icons.get(key, "📊")
-                        label = key.title()
+                        label = section_display_labels.get(key, key.title())
                         
                         section_bars_html += f'''
                         <div class="sec-row">
@@ -2532,7 +2577,7 @@ if st.session_state.get("analyzed") and "report" in st.session_state:
                     <div class="section-card">
                         <div class="section-title">
                             <div class="section-title-icon">📊</div>
-                            Section Coverage
+                            JD Section Coverage
                         </div>
                         {section_bars_html}
                     </div>
@@ -2760,17 +2805,17 @@ if st.session_state.get("analyzed") and "report" in st.session_state:
     # TAB 4 — Skills & Gaps (Complete Redesign)
     # ─────────────────────────────────────────────────────────
     with tabs[3]:
-        # Extract all skill data
+        # Extract all skill data — use the SAME coverage as the Overview tab
         matched_skills = skill_gap.get("matched_skills", [])
         missing_skills = skill_gap.get("missing_skills", [])
         total_skills = len(matched_skills) + len(missing_skills)
-        skill_coverage = (len(matched_skills) / total_skills * 100) if total_skills > 0 else 0
+        skill_coverage = coverage_pct  # from overview: skill_gap.get("coverage_percent", 0)
         
         detected_soft = soft_skill.get("detected", soft_skill.get("soft_skills", []))
         if isinstance(detected_soft, dict):
             detected_soft = [item for items in detected_soft.values() for item in (items if isinstance(items, list) else [items])]
         
-        ia_score = industry.get("alignment_score", 0)
+        ia_score = industry_score  # from overview: reuse the same value
         aligned_skills = industry.get("aligned_skills", [])
         trending_skills = industry.get("trending_skills", [])
         
@@ -2865,7 +2910,7 @@ if st.session_state.get("analyzed") and "report" in st.session_state:
                         </svg>
                     </div>
                     <div class="featured-content">
-                        <div class="featured-title">Skill Health</div>
+                        <div class="featured-title">Skill Coverage</div>
                         <div class="featured-status">{health_emoji} {health_status}</div>
                         <div class="featured-label">{len(matched_skills)}/{total_skills} skills matched</div>
                     </div>
@@ -2888,7 +2933,7 @@ if st.session_state.get("analyzed") and "report" in st.session_state:
                 <div class="stat-card">
                     <div class="stat-icon">💼</div>
                     <div class="stat-value" style="color:#6366F1;">{ia_score:.0f}%</div>
-                    <div class="stat-label">Industry Fit</div>
+                    <div class="stat-label">Industry Fit Score</div>
                     <div class="stat-badge badge-{'green' if ia_score >= 60 else 'amber'}">{'Strong' if ia_score >= 60 else 'Growing'}</div>
                 </div>
             </div>
@@ -3429,7 +3474,7 @@ if st.session_state.get("analyzed") and "report" in st.session_state:
             st.markdown(f'''
             <div class="score-hero anim-up">
                 <div class="score-hero-val">{improvement_score:.0f}<span style="font-size:1.5rem;color:#94A3B8;">/100</span></div>
-                <div class="score-hero-label">Resume Quality Score</div>
+                <div class="score-hero-label">Resume Quality</div>
                 <div class="score-hero-sub">{_label(improvement_score)}</div>
             </div>''', unsafe_allow_html=True)
             st.markdown('<div class="spacer-md"></div>', unsafe_allow_html=True)
@@ -3491,13 +3536,14 @@ if st.session_state.get("analyzed") and "report" in st.session_state:
     # ─────────────────────────────────────────────────────────
     with tabs[6]:
         # ---- Prepare data ----
-        r_ats_score = ats.get("final_score", 0)
-        r_skill_coverage = skill_gap.get("coverage_percent", 0)
-        r_jd_match = jd_comp.get("overall_match_percent", 0) if jd_comp else 0
-        r_ats_sim = ats_sim.get("ats_compatibility_score", 0)
-        r_soft = soft_skill.get("composite_score", 0) if isinstance(soft_skill.get("composite_score"), (int, float)) else 0
-        r_industry = industry.get("alignment_score", 0) if isinstance(industry.get("alignment_score"), (int, float)) else 0
-        r_quality = improvements.get("improvement_score", 0)
+        # Reuse the SAME scores extracted for the Overview tab
+        r_ats_score = ats_score_val
+        r_skill_coverage = coverage_pct
+        r_jd_match = jd_match_pct
+        r_ats_sim = ats_sim_score
+        r_soft = soft_score
+        r_industry = industry_score
+        r_quality = improvement_score
 
         r_matched = skill_gap.get("matched_skills", [])
         r_missing = skill_gap.get("missing_skills", [])
@@ -3516,12 +3562,12 @@ if st.session_state.get("analyzed") and "report" in st.session_state:
         # ---- Score summary bar ----
         scores_data = [
             ("ATS Score", r_ats_score, _clr(r_ats_score)),
-            ("Skills", r_skill_coverage, _clr(r_skill_coverage)),
+            ("Skill Coverage", r_skill_coverage, _clr(r_skill_coverage)),
             ("JD Match", r_jd_match, _clr(r_jd_match)),
-            ("ATS Sim", r_ats_sim, _clr(r_ats_sim)),
+            ("ATS Simulation", r_ats_sim, _clr(r_ats_sim)),
             ("Soft Skills", r_soft, _clr(r_soft)),
-            ("Industry", r_industry, _clr(r_industry)),
-            ("Quality", r_quality, _clr(r_quality)),
+            ("Industry Fit", r_industry, _clr(r_industry)),
+            ("Resume Quality", r_quality, _clr(r_quality)),
         ]
         score_cells = ""
         for label, val, color in scores_data:

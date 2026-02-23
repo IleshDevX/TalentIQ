@@ -8,5 +8,5 @@ font = "sans serif"
 
 [server]
 maxUploadSize = 10
-fileWatcherType = "auto"
-runOnSave = true
+fileWatcherType = "poll"
+runOnSave = false

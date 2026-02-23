@@ -38,7 +38,6 @@ def start_api() -> subprocess.Popen:
         "--port", "8000", 
         "--reload",
         "--reload-dir", "app",
-        "--reload-dir", "datasets"
     ]
     print(f"\n🚀 Starting TalentIQ API on http://127.0.0.1:8000")
     proc = subprocess.Popen(cmd, cwd=ROOT)
@@ -87,7 +86,7 @@ def main():
     if mode in ("--api", "--all"):
         start_api()
     if mode in ("--ui", "--all"):
-        time.sleep(2)  # let API start first
+        time.sleep(5)  # let API fully initialize before starting UI
         start_ui()
 
     print("\n✅ TalentIQ is running. Press Ctrl+C to stop.\n")
